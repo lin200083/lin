@@ -422,71 +422,27 @@ PrivateKey  私钥，可以导入钱包，也可以控制资产
 
 ## 常见问题
 
-### 怎么上传到 GitHub
+### 下载预编译 exe
 
-推荐用 Git 命令上传，不建议直接在 GitHub 网页里拖整个文件夹。因为网页拖拽不会读取 `.gitignore`，容易把 `results`、`logs`、`state` 或 `bin` 一起传上去。
-
-先在 GitHub 网页新建一个空仓库：
+如果不想自己编译，可以去 GitHub Releases 下载 Windows 版 exe：
 
 ```text
-Repository name: vanity-wallet-generator
-Visibility: Public 或 Private 都可以
-不要勾选 Add a README file
-不要勾选 Add .gitignore
-不要勾选 Choose a license
+https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.0.0
 ```
 
-创建后，GitHub 会给你一个仓库地址，类似：
+当前附件名：
 
 ```text
-https://github.com/你的用户名/vanity-wallet-generator.git
+vanity-native-windows-x64.exe
 ```
 
-然后在 PowerShell 里运行：
-
-```powershell
-cd "$env:USERPROFILE\Desktop\vanity-wallet-generator"
-git init
-git add .
-git commit -m "Initial native vanity wallet generator"
-git branch -M main
-git remote add origin https://github.com/你的用户名/vanity-wallet-generator.git
-git push -u origin main
-```
-
-注意把上面的仓库地址换成你自己的。
-
-如果 `git commit` 提示没有配置用户名和邮箱，先运行：
-
-```powershell
-git config --global user.name "你的名字"
-git config --global user.email "你的邮箱"
-```
-
-然后重新运行：
-
-```powershell
-git commit -m "Initial native vanity wallet generator"
-git push -u origin main
-```
-
-上传前可以检查哪些文件会被提交：
-
-```powershell
-git status --short
-```
-
-正常情况下，不应该看到这些目录：
+下载后可以放到项目的 `bin` 目录，并改名为：
 
 ```text
-results
-logs
-state
-bin
-native\vanity-native\target
+vanity-native.exe
 ```
 
-这些目录已经写进 `.gitignore`，不会被 Git 默认提交。
+这样 `start-native.ps1` 就能直接调用它。
 
 ### 提示脚本无法运行
 
