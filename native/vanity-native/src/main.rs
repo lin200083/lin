@@ -2,7 +2,7 @@ use chrono::Local;
 use rand::rngs::OsRng;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{constants, PublicKey, Scalar, Secp256k1, SecretKey};
 use sha3::{Digest, Keccak256};
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -236,7 +236,9 @@ fn worker_loop(
     let mut seed = <ChaCha20Rng as SeedableRng>::Seed::default();
     OsRng.fill_bytes(&mut seed);
     let mut rng = ChaCha20Rng::from_seed(seed);
-    let mut private_key = [0u8; 32];
+    let generator_key = generator_public_key(&secp);
+    let (mut sequence_secret_key, mut public_key) = random_sequence_start(&secp, &mut rng);
+    let mut sequence_offset = 0u64;
     let mut attempts = 0u64;
     states[worker_id - 1].alive.store(true, Ordering::SeqCst);
 
@@ -246,19 +248,20 @@ fn worker_loop(
                 break;
             }
 
-            rng.fill_bytes(&mut private_key);
             attempts = attempts.wrapping_add(1);
 
-            let secret_key = match SecretKey::from_byte_array(private_key) {
-                Ok(secret_key) => secret_key,
-                Err(_) => continue,
-            };
-
-            let public_key = PublicKey::from_secret_key(&secp, &secret_key);
             let serialized = public_key.serialize_uncompressed();
             let hash = keccak(&serialized[1..]);
 
             if !matches_address_hash(&hash, &config) {
+                advance_sequence(
+                    &secp,
+                    &generator_key,
+                    &mut sequence_secret_key,
+                    &mut public_key,
+                    &mut sequence_offset,
+                    &mut rng,
+                );
                 continue;
             }
 
@@ -270,9 +273,18 @@ fn worker_loop(
             };
 
             if !matches_address_body(&comparable_body, &config) {
+                advance_sequence(
+                    &secp,
+                    &generator_key,
+                    &mut sequence_secret_key,
+                    &mut public_key,
+                    &mut sequence_offset,
+                    &mut rng,
+                );
                 continue;
             }
 
+            let private_key = sequence_private_key(&sequence_secret_key, sequence_offset);
             states[worker_id - 1]
                 .attempts
                 .store(attempts, Ordering::Relaxed);
@@ -305,6 +317,91 @@ fn worker_loop(
     states[worker_id - 1]
         .attempts
         .store(attempts, Ordering::Relaxed);
+}
+
+fn random_sequence_start(
+    secp: &Secp256k1<secp256k1::All>,
+    rng: &mut ChaCha20Rng,
+) -> (SecretKey, PublicKey) {
+    let mut private_key = [0u8; 32];
+    loop {
+        rng.fill_bytes(&mut private_key);
+        if let Ok(secret_key) = SecretKey::from_byte_array(private_key) {
+            let public_key = PublicKey::from_secret_key(secp, &secret_key);
+            return (secret_key, public_key);
+        }
+    }
+}
+
+fn generator_public_key(secp: &Secp256k1<secp256k1::All>) -> PublicKey {
+    let secret_key = SecretKey::from_byte_array(constants::ONE).expect("curve one is valid");
+    PublicKey::from_secret_key(secp, &secret_key)
+}
+
+fn advance_sequence(
+    secp: &Secp256k1<secp256k1::All>,
+    generator_key: &PublicKey,
+    sequence_secret_key: &mut SecretKey,
+    public_key: &mut PublicKey,
+    sequence_offset: &mut u64,
+    rng: &mut ChaCha20Rng,
+) {
+    if *sequence_offset == u64::MAX {
+        (*sequence_secret_key, *public_key) = random_sequence_start(secp, rng);
+        *sequence_offset = 0;
+        return;
+    }
+
+    match public_key.combine(generator_key) {
+        Ok(next_public_key) => {
+            *public_key = next_public_key;
+            *sequence_offset += 1;
+        }
+        Err(_) => {
+            (*sequence_secret_key, *public_key) = random_sequence_start(secp, rng);
+            *sequence_offset = 0;
+        }
+    }
+}
+
+fn sequence_private_key(sequence_secret_key: &SecretKey, sequence_offset: u64) -> [u8; 32] {
+    if sequence_offset == 0 {
+        return sequence_secret_key.secret_bytes();
+    }
+
+    let mut offset_bytes = [0u8; 32];
+    offset_bytes[24..].copy_from_slice(&sequence_offset.to_be_bytes());
+    let offset = Scalar::from_be_bytes(offset_bytes).expect("u64 offset is a valid scalar");
+    sequence_secret_key
+        .add_tweak(&offset)
+        .expect("active sequence private key is valid")
+        .secret_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequence_private_key_matches_incremented_public_key() {
+        let secp = Secp256k1::new();
+        let mut rng = ChaCha20Rng::from_seed([7u8; 32]);
+        let generator_key = generator_public_key(&secp);
+        let (sequence_secret_key, mut public_key) = random_sequence_start(&secp, &mut rng);
+
+        for offset in 0..128u64 {
+            let private_key = sequence_private_key(&sequence_secret_key, offset);
+            let secret_key = SecretKey::from_byte_array(private_key).unwrap();
+            let derived_public_key = PublicKey::from_secret_key(&secp, &secret_key);
+
+            assert_eq!(
+                derived_public_key.serialize_uncompressed(),
+                public_key.serialize_uncompressed()
+            );
+
+            public_key = public_key.combine(&generator_key).unwrap();
+        }
+    }
 }
 
 fn parse_args() -> Result<Config, String> {

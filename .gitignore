@@ -1,6 +1,17 @@
-bin/
-logs/
-state/
-results/
-native/*/target/
+# Rust build output
+/native/vanity-native/target/
+/native/vanity-native/target-*/
+
+# Generated executable copied by Build-Native.ps1
+/bin/
+
+# Runtime output. These may contain private keys.
+/results/
+/state/
+/logs/
+/dist/
+
+# Local editor and OS noise
+.DS_Store
+Thumbs.db
 *.tmp

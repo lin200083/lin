@@ -2,7 +2,7 @@
 
 这是一个在 Windows PowerShell 里运行的 **EVM 靓号钱包地址生成器**。
 
-新手建议直接下载 GitHub Releases 里的 `vanity-wallet-generator-windows-x64-v1.0.1.zip`，解压后在文件夹里运行：
+新手建议直接下载 GitHub Releases 里的 `vanity-wallet-generator-windows-x64-v1.1.0.zip`，解压后在文件夹里运行：
 
 ```powershell
 .\start-native.ps1
@@ -48,14 +48,15 @@
 
 ## 工作原理
 
-这个工具不是“指定生成某个地址”，而是本地暴力随机搜索：
+这个工具不是“指定生成某个地址”，而是本地暴力搜索：
 
-1. 随机生成 32 字节私钥。
-2. 用 secp256k1 推导公钥。
-3. 用 Keccak-256 计算 EVM 地址。
-4. 判断地址是否满足前缀或后缀规则。
-5. 不满足就继续生成。
-6. 命中后保存地址和私钥，然后停止。
+1. 每个 worker 先随机生成一个 32 字节起始私钥。
+2. 用 secp256k1 推导起始公钥。
+3. 后续尝试通过公钥点加连续前进，避免每次都重新做完整私钥到公钥推导。
+4. 用 Keccak-256 计算 EVM 地址。
+5. 判断地址是否满足前缀或后缀规则。
+6. 不满足就继续搜索。
+7. 命中后还原当前私钥，保存地址和私钥，然后停止。
 
 每固定 1 个十六进制字符，难度乘以 16。
 
@@ -77,11 +78,28 @@ start-native.ps1         启动原生版，平时主要运行它
 Build-Native.ps1         编译 Rust 原生 exe
 Measure-NativeSpeed.ps1  测速脚本
 Get-Status.ps1           查看当前或最近一次状态
+Clean-Generated.ps1      清理构建缓存和测速残留
+Release-Pack.ps1         生成源码包和新手 Windows zip 包
+Upload-Release.ps1       上传 dist 里的发布文件到 GitHub Releases
 bin\vanity-native.exe    编译后的 Windows 可执行文件
 native\vanity-native\    Rust 源码
 results\                 命中结果保存位置
 state\                   状态文件保存位置
 logs\                    日志保存位置
+```
+
+## 清理生成文件
+
+清理 Rust 构建缓存、测速状态和空的测速结果目录：
+
+```powershell
+.\Clean-Generated.ps1
+```
+
+默认不会删除 `results` 里的钱包结果文件，因为里面可能有私钥。只有你明确确认这些结果都不需要时，才使用：
+
+```powershell
+.\Clean-Generated.ps1 -IncludeWalletResults
 ```
 
 ## 第一次运行
@@ -293,7 +311,7 @@ Status updates will refresh on one line. Use -PlainOutput for scrolling output.
 然后状态会在同一行里刷新：
 
 ```text
-[12:00:05] attempts=1,314,816 rate=228,138/s runtime=00:00:06 workers=8/8
+[12:00:05] attempts=9,427,968 rate=1,709,062/s runtime=00:00:05 workers=8/8
 ```
 
 字段含义：
@@ -321,23 +339,24 @@ workers    当前 worker 数量
 
 它会使用一个几乎不可能在短时间内命中的目标，只跑固定秒数，用来观察 `rate`。
 
-这台机器实测 8 个 worker 大约：
+这台机器实测大约：
 
 ```text
-190,000 到 230,000 地址/秒
+8 个 worker    1,700,000 到 2,000,000 地址/秒
+12 个 worker   1,800,000 到 2,100,000 地址/秒
 ```
 
 不同电脑、后台负载、Windows 电源模式都会影响速度。
 
 ## 时间预估
 
-按 `200,000 地址/秒` 粗略估算：
+按 `2,000,000 地址/秒` 粗略估算：
 
 ```text
-后缀 0000       约 0.3 秒
-后缀 000000     约 1.4 分钟
-后缀 00000000   约 6 小时
-后缀 000000000  约 4 天
+后缀 0000       约 0.03 秒
+后缀 000000     约 8 秒
+后缀 00000000   约 36 分钟
+后缀 000000000  约 9.5 小时
 ```
 
 这仍然是平均值，不是保证值。
@@ -437,13 +456,13 @@ PrivateKey  私钥，可以导入钱包，也可以控制资产
 如果不想自己编译，可以去 GitHub Releases 下载 Windows 版：
 
 ```text
-https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.0.1
+https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.1.0
 ```
 
 新手推荐下载这个 zip：
 
 ```text
-vanity-wallet-generator-windows-x64-v1.0.1.zip
+vanity-wallet-generator-windows-x64-v1.1.0.zip
 ```
 
 解压后进入文件夹，运行：
@@ -455,7 +474,7 @@ vanity-wallet-generator-windows-x64-v1.0.1.zip
 如果只想单独下载 exe，也可以下载：
 
 ```text
-vanity-native-windows-x64-v1.0.1.exe
+vanity-native-windows-x64-v1.1.0.exe
 ```
 
 单独下载 exe 后，需要放到项目的 `bin` 目录，并改名为：
