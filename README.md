@@ -432,21 +432,33 @@ PrivateKey  私钥，可以导入钱包，也可以控制资产
 
 ## 常见问题
 
-### 下载预编译 exe
+### 下载预编译版本
 
-如果不想自己编译，可以去 GitHub Releases 下载 Windows 版 exe：
-
-```text
-https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.0.0
-```
-
-当前附件名：
+如果不想自己编译，可以去 GitHub Releases 下载 Windows 版：
 
 ```text
-vanity-native-windows-x64.exe
+https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.0.1
 ```
 
-下载后可以放到项目的 `bin` 目录，并改名为：
+新手推荐下载这个 zip：
+
+```text
+vanity-wallet-generator-windows-x64-v1.0.1.zip
+```
+
+解压后进入文件夹，运行：
+
+```powershell
+.\start-native.ps1
+```
+
+如果只想单独下载 exe，也可以下载：
+
+```text
+vanity-native-windows-x64-v1.0.1.exe
+```
+
+单独下载 exe 后，需要放到项目的 `bin` 目录，并改名为：
 
 ```text
 vanity-native.exe
