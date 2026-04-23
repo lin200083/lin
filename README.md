@@ -2,6 +2,12 @@
 
 这是一个在 Windows PowerShell 里运行的 **EVM 靓号钱包地址生成器**。
 
+新手建议直接下载 GitHub Releases 里的 `vanity-wallet-generator-windows-x64-v1.0.1.zip`，解压后在文件夹里运行：
+
+```powershell
+.\start-native.ps1
+```
+
 当前项目已经精简为 **Rust 原生 `.exe` 版**，不再包含 Node.js 版本。平时只需要记住一个启动脚本：
 
 ```powershell
