@@ -35,6 +35,7 @@ struct Config {
 
 struct ThreadState {
     attempts: AtomicU64,
+    alive: AtomicBool,
 }
 
 struct MatchResult {
@@ -49,7 +50,7 @@ struct StatusSnapshot {
     attempts: u64,
     rate: u64,
     runtime: String,
-    workers: usize,
+    alive_workers: usize,
     matched: bool,
 }
 
@@ -86,6 +87,7 @@ fn run() -> Result<(), String> {
         (0..config.workers)
             .map(|_| ThreadState {
                 attempts: AtomicU64::new(0),
+                alive: AtomicBool::new(false),
             })
             .collect::<Vec<_>>(),
     );
@@ -160,7 +162,7 @@ fn run() -> Result<(), String> {
                 attempts,
                 rate: last_rate,
                 runtime: format_duration(started.elapsed()),
-                workers: config.workers,
+                alive_workers: alive_workers(&states),
                 matched: false,
             };
 
@@ -184,7 +186,7 @@ fn run() -> Result<(), String> {
         attempts: final_attempts,
         rate: last_rate,
         runtime: format_duration(started.elapsed()),
-        workers: config.workers,
+        alive_workers: alive_workers(&states),
         matched: found.load(Ordering::Relaxed),
     };
     write_status(&config, &run_id, &final_snapshot)?;
@@ -236,6 +238,7 @@ fn worker_loop(
     let mut rng = ChaCha20Rng::from_seed(seed);
     let mut private_key = [0u8; 32];
     let mut attempts = 0u64;
+    states[worker_id - 1].alive.store(true, Ordering::SeqCst);
 
     while !stop.load(Ordering::Relaxed) && !found.load(Ordering::Relaxed) {
         for _ in 0..config.batch_size {
@@ -289,6 +292,7 @@ fn worker_loop(
                 }
             }
 
+            states[worker_id - 1].alive.store(false, Ordering::SeqCst);
             return;
         }
 
@@ -297,6 +301,7 @@ fn worker_loop(
             .store(attempts, Ordering::Relaxed);
     }
 
+    states[worker_id - 1].alive.store(false, Ordering::SeqCst);
     states[worker_id - 1]
         .attempts
         .store(attempts, Ordering::Relaxed);
@@ -512,7 +517,6 @@ fn checksum_body(address_body: &str) -> String {
 }
 
 fn print_banner(config: &Config, run_id: &str) {
-    let digits = config.prefix.len() + config.suffix.len();
     println!("Native EVM vanity search");
     println!("Run ID: {run_id}");
     println!(
@@ -523,7 +527,7 @@ fn print_banner(config: &Config, run_id: &str) {
     println!("Workers: {}", config.workers);
     println!(
         "Average attempts estimate: {}",
-        average_attempts_text(digits)
+        average_attempts_text(config)
     );
     if !config.plain_output {
         println!("Status updates will refresh on one line. Use -PlainOutput for scrolling output.");
@@ -541,7 +545,7 @@ fn print_status(
         format_number(snapshot.attempts),
         format_number(snapshot.rate),
         snapshot.runtime,
-        snapshot.workers,
+        snapshot.alive_workers,
         config.workers
     );
 
@@ -602,7 +606,7 @@ fn write_status(config: &Config, run_id: &str, snapshot: &StatusSnapshot) -> Res
         snapshot.attempts,
         snapshot.rate,
         snapshot.runtime,
-        snapshot.workers,
+        snapshot.alive_workers,
         config.workers,
     );
 
@@ -651,7 +655,7 @@ fn write_result(
         display_pattern(&config.prefix),
         display_pattern(&config.suffix),
         config.case_sensitive,
-        average_attempts_text(config.prefix.len() + config.suffix.len()),
+        average_attempts_text(config),
         total_attempts,
         result.worker_id,
         result.worker_attempts,
@@ -678,18 +682,70 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         Local::now().timestamp_nanos_opt().unwrap_or_default()
     ));
 
-    fs::write(&temp_path, bytes)
-        .map_err(|e| format!("write {} failed: {e}", temp_path.display()))?;
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| format!("remove {} failed: {e}", path.display()))?;
+    {
+        let mut file = fs::File::create(&temp_path)
+            .map_err(|e| format!("create {} failed: {e}", temp_path.display()))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("write {} failed: {e}", temp_path.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("sync {} failed: {e}", temp_path.display()))?;
     }
-    fs::rename(&temp_path, path).map_err(|e| {
-        format!(
-            "rename {} to {} failed: {e}",
-            temp_path.display(),
-            path.display()
+
+    replace_file(&temp_path, path)
+}
+
+fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        replace_file_windows(temp_path, path)
+    }
+
+    #[cfg(not(windows))]
+    {
+        fs::rename(temp_path, path).map_err(|e| {
+            format!(
+                "rename {} to {} failed: {e}",
+                temp_path.display(),
+                path.display()
+            )
+        })
+    }
+}
+
+#[cfg(windows)]
+fn replace_file_windows(temp_path: &Path, path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    fn to_wide(path: &Path) -> Vec<u16> {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    let from = to_wide(temp_path);
+    let to = to_wide(path);
+
+    let ok = unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
-    })
+    };
+
+    if ok == 0 {
+        return Err(format!(
+            "replace {} with {} failed",
+            path.display(),
+            temp_path.display()
+        ));
+    }
+
+    Ok(())
 }
 
 fn log_event(config: &Config, message: &str) -> Result<(), String> {
@@ -711,6 +767,13 @@ fn total_attempts(states: &[ThreadState]) -> u64 {
         .iter()
         .map(|state| state.attempts.load(Ordering::Relaxed))
         .sum()
+}
+
+fn alive_workers(states: &[ThreadState]) -> usize {
+    states
+        .iter()
+        .filter(|state| state.alive.load(Ordering::Relaxed))
+        .count()
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -741,18 +804,50 @@ fn display_pattern(value: &str) -> &str {
     }
 }
 
-fn average_attempts_text(digits: usize) -> String {
-    average_attempts_plain(digits)
-        .map(|value| format_number(value))
-        .unwrap_or_else(|| format!("16^{digits}"))
+fn average_attempts_text(config: &Config) -> String {
+    let digits = config.prefix.len() + config.suffix.len();
+    let letters = checksum_sensitive_letter_count(config);
+
+    average_attempts_plain(config)
+        .map(format_number)
+        .unwrap_or_else(|| {
+            if config.case_sensitive && letters > 0 {
+                format!("16^{digits} x 2^{letters}")
+            } else {
+                format!("16^{digits}")
+            }
+        })
 }
 
-fn average_attempts_plain(digits: usize) -> Option<u64> {
+fn average_attempts_plain(config: &Config) -> Option<u64> {
+    let digits = config.prefix.len() + config.suffix.len();
+    let letters = checksum_sensitive_letter_count(config);
     let mut value = 1u64;
+
     for _ in 0..digits {
         value = value.checked_mul(16)?;
     }
+
+    if config.case_sensitive {
+        for _ in 0..letters {
+            value = value.checked_mul(2)?;
+        }
+    }
+
     Some(value)
+}
+
+fn checksum_sensitive_letter_count(config: &Config) -> usize {
+    if !config.case_sensitive {
+        return 0;
+    }
+
+    config
+        .prefix
+        .chars()
+        .chain(config.suffix.chars())
+        .filter(|ch| matches!(ch, 'a'..='f' | 'A'..='F'))
+        .count()
 }
 
 fn print_help() {

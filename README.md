@@ -64,13 +64,7 @@
 
 ## 文件结构
 
-项目位置：
-
-```text
-C:\Users\Administrator\Desktop\vanity-wallet-generator
-```
-
-主要文件：
+项目根目录主要文件：
 
 ```text
 start-native.ps1         启动原生版，平时主要运行它
@@ -86,10 +80,18 @@ logs\                    日志保存位置
 
 ## 第一次运行
 
-打开 Windows PowerShell，进入项目目录：
+打开 Windows PowerShell，进入仓库目录。
+
+如果仓库放在桌面，可以这样进入：
 
 ```powershell
 cd "$env:USERPROFILE\Desktop\vanity-wallet-generator"
+```
+
+如果放在其他位置，把路径换成你的实际目录：
+
+```powershell
+cd "你的仓库目录\vanity-wallet-generator"
 ```
 
 如果提示脚本不能运行，先在当前窗口临时放行：
@@ -267,6 +269,8 @@ PrivateKey: [redacted by --redact-private-key]
 -CaseSensitive           按 EIP-55 checksum 大小写精确匹配，一般不要加
 ```
 
+启用 `-CaseSensitive` 后，如果前缀或后缀里包含 `a-f` 字母，实际搜索难度会比普通模式更高，因为还需要同时满足 EIP-55 checksum 大小写约束。
+
 ## 运行时怎么看
 
 启动后会先显示任务信息：
@@ -377,7 +381,7 @@ Ctrl+C
 结果保存在：
 
 ```text
-C:\Users\Administrator\Desktop\vanity-wallet-generator\results
+results\
 ```
 
 每次命中会生成：
