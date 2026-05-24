@@ -1,18 +1,10 @@
 # Vanity Wallet Generator 使用说明
 
-这是一个在 Windows PowerShell 里运行的 **EVM 靓号钱包地址生成器**。
+这是一个在 Windows 上运行的 **EVM 靓号钱包地址生成器**。
 
-新手建议直接下载 GitHub Releases 里“最新版本”的 Windows x64 压缩包（文件名通常类似 `vanity-wallet-generator-windows-x64-vX.Y.Z.zip`），解压后在文件夹里运行：
+**新手推荐直接下载 GitHub Releases 里的新手包（`vanity-wallet-generator-windows-x64-vX.Y.Z.zip`），解压后双击 `双击我运行.bat` 即可**，全程菜单引导，无需记忆任何命令。
 
-```powershell
-.\start-native.ps1
-```
-
-当前项目已经精简为 **Rust 原生 `.exe` 版**，不再包含 Node.js 版本。平时只需要记住一个启动脚本：
-
-```powershell
-.\start-native.ps1
-```
+如果命令行用得熟，也可以用 `start-native.ps1` 直接传参。
 
 它会不断随机生成私钥，推导 `0x...` 地址，然后检查地址是否符合你设置的前缀或后缀。命中后，会把地址和私钥保存到 `results` 文件夹。
 
@@ -74,7 +66,9 @@
 项目根目录主要文件：
 
 ```text
-start-native.ps1         启动原生版，平时主要运行它
+双击我运行.bat           小白专用入口，双击打开交互式菜单
+easy-start.ps1           交互式引导脚本，一步步选择参数
+start-native.ps1         命令行版启动脚本，适合高手
 Build-Native.ps1         编译 Rust 原生 exe
 Measure-NativeSpeed.ps1  测速脚本
 Get-Status.ps1           查看当前或最近一次状态
@@ -104,19 +98,15 @@ logs\                    日志保存位置
 
 ## 第一次运行
 
-打开 Windows PowerShell，进入仓库目录。
+### 交互模式（新手推荐）
 
-如果仓库放在桌面，可以这样进入：
-
-```powershell
-cd "$env:USERPROFILE\Desktop\vanity-wallet-generator"
-```
-
-如果放在其他位置，把路径换成你的实际目录：
+在文件管理器里直接双击 `双击我运行.bat`，或者打开 PowerShell 输入：
 
 ```powershell
-cd "你的仓库目录\vanity-wallet-generator"
+.\easy-start.ps1
 ```
+
+然后跟着屏幕提示选择搜索模式、输入内容、确认信息即可。全程不需要记任何参数。
 
 如果提示脚本不能运行，先在当前窗口临时放行：
 
@@ -124,7 +114,17 @@ cd "你的仓库目录\vanity-wallet-generator"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-然后运行短测试：
+### 命令行模式（高手用）
+
+打开 Windows PowerShell，进入仓库目录。
+
+如果仓库放在桌面：
+
+```powershell
+cd "$env:USERPROFILE\Desktop\vanity-wallet-generator"
+```
+
+运行短测试：
 
 ```powershell
 .\start-native.ps1 -Suffix "0000" -Workers 4 -PreventSleep
@@ -459,13 +459,15 @@ PrivateKey  私钥，可以导入钱包，也可以控制资产
 https://github.com/lin200083/vanity-wallet-generator/releases/latest
 ```
 
-新手推荐下载这个 zip：
+**新手推荐**下载这个 zip：
 
 ```text
 vanity-wallet-generator-windows-x64-vX.Y.Z.zip
 ```
 
-解压后进入文件夹，运行：
+解压后**双击 `双击我运行.bat`** 即可，无需打开 PowerShell。
+
+如果用命令行，也可以运行：
 
 ```powershell
 .\start-native.ps1
@@ -538,6 +540,15 @@ bin\vanity-native.exe
 再根据实际 `rate` 估算时间。
 
 ## 推荐流程
+
+### 交互模式（新手）
+
+1. 双击 `双击我运行.bat`（或运行 `.\easy-start.ps1`）
+2. 根据菜单提示选择搜索模式、输入内容
+3. 确认配置后自动开始搜索
+4. 命中后按提示打开结果文件，备份 `PrivateKey`
+
+### 命令行模式（高手）
 
 1. 进入目录：
 
