@@ -79,6 +79,7 @@ New-Item -ItemType Directory -Force -Path $BeginnerRoot, $SourceRoot | Out-Null
 
 $beginnerItems = @(
     "README.md",
+    "README_EN.md",
     "LICENSE",
     "start-native.ps1",
     "easy-start.ps1",
@@ -96,6 +97,7 @@ foreach ($item in $beginnerItems) {
 $sourceItems = @(
     ".gitignore",
     "README.md",
+    "README_EN.md",
     "LICENSE",
     "Build-Native.ps1",
     "Clean-Generated.ps1",
