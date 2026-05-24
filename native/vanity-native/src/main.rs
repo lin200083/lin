@@ -311,46 +311,6 @@ fn build_config(cli: Cli) -> Result<Config, String> {
 }
 
 fn worker_loop(
-    if prefix.is_empty() && suffix.is_empty() {
-        return Err("at least one of prefix or suffix is required".to_string());
-    }
-
-    if prefix.len() + suffix.len() > 40 {
-        return Err(
-            "prefix plus suffix cannot exceed 40 hex characters for an EVM address".to_string(),
-        );
-    }
-
-    if cli.workers < 1 {
-        return Err("workers must be at least 1".to_string());
-    }
-
-    if cli.status_interval < 1 {
-        return Err("status-interval must be at least 1".to_string());
-    }
-
-    if cli.batch_size < 1 {
-        return Err("batch-size must be at least 1".to_string());
-    }
-
-    Ok(Config {
-        prefix_nibbles: hex_to_nibbles(&prefix)?,
-        suffix_nibbles: hex_to_nibbles(&suffix)?,
-        prefix,
-        suffix,
-        workers: cli.workers,
-        status_interval: Duration::from_secs(cli.status_interval),
-        batch_size: cli.batch_size,
-        case_sensitive: cli.case_sensitive,
-        redact_private_key: cli.redact_private_key,
-        plain_output: cli.plain_output,
-        max_seconds: cli.max_seconds,
-        state_dir: cli.state_dir,
-        result_dir: cli.result_dir,
-        logs_dir: cli.logs_dir,
-    })
-}
-
     worker_id: usize,
     config: Arc<Config>,
     stop: Arc<AtomicBool>,
