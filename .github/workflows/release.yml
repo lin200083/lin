@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build native executable
+        run: cargo build --release
+        working-directory: native/vanity-native
+
+      - name: Stage executable
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          Copy-Item -Force "native/vanity-native/target/release/vanity-native.exe" "bin/vanity-native.exe"
+
+      - name: Create release packages
+        run: ./Release-Pack.ps1
+
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" 
+            --title "${{ github.ref_name }}" 
+            --notes-file "dist/release-notes-${{ github.ref_name }}.md" 
+            dist/*.zip 
+            dist/*.exe
