@@ -690,7 +690,7 @@ fn matches_address_body(address_body: &str, config: &Config) -> bool {
 
 fn address_nibble(hash: &[u8; 32], address_nibble_index: usize) -> u8 {
     let byte = hash[12 + (address_nibble_index >> 1)];
-    if address_nibble_index % 2 == 0 {
+    if address_nibble_index.is_multiple_of(2) {
         byte >> 4
     } else {
         byte & 0x0f

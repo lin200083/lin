@@ -123,13 +123,25 @@ $sourceZip = Join-Path $DistDir "$SourceName.zip"
 Compress-Archive -LiteralPath $BeginnerRoot -DestinationPath $beginnerZip -Force
 Compress-Archive -LiteralPath $SourceRoot -DestinationPath $sourceZip -Force
 Copy-Item -LiteralPath $NativeExe -Destination $StandaloneExe -Force
-Set-Content -LiteralPath $ReleaseNotes -Encoding UTF8 -Value @"
+$changelog = ""
+$null = git rev-parse --git-dir 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
+    if ($lastTag) {
+        $log = git log --oneline --no-decorate "$lastTag..HEAD" 2>$null
+        if ($log) {
+            $changelog = ($log | ForEach-Object { "- $_" }) -join "`n"
+        }
+    }
+}
+
+if ($changelog) {
+    $notesContent = @"
 ## v$Version
 
-### What's New
+### What's Changed
 
-- **交互式引导脚本** (easy-start.ps1): 新增菜单式引导界面，小白用户无需记命令，一步步选择就能开跑。配套 `双击我运行.bat`，双击即可启动，无需打开 PowerShell。
-- 新手包现在包含 `easy-start.ps1` 和 `双击我运行.bat`，解压即用。
+$changelog
 
 ### Downloads
 
@@ -141,6 +153,23 @@ Set-Content -LiteralPath $ReleaseNotes -Encoding UTF8 -Value @"
 
 This tool generates private keys locally. Keep result files private and back up any private key before funding an address.
 "@
+} else {
+    $notesContent = @"
+## v$Version
+
+### Downloads
+
+- ``vanity-wallet-generator-windows-x64-v$Version.zip``: recommended for beginners. Unzip and double-click ``双击我运行.bat``.
+- ``vanity-wallet-generator-source-v$Version.zip``: source package for developers.
+- ``vanity-native-windows-x64-v$Version.exe``: standalone native executable.
+
+### Safety
+
+This tool generates private keys locally. Keep result files private and back up any private key before funding an address.
+"@
+}
+
+Set-Content -LiteralPath $ReleaseNotes -Encoding UTF8 -Value $notesContent
 
 Remove-Item -LiteralPath $StagingDir -Recurse -Force
 
