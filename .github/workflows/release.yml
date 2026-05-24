@@ -32,12 +32,12 @@ jobs:
       - name: Create release packages
         run: ./Release-Pack.ps1
 
+      - name: Get version from Cargo.toml
+        run: |
+          $ver = Select-String -Path native/vanity-native/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_VERSION=$ver" -Encoding UTF8
+
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" 
-            --title "${{ github.ref_name }}" 
-            --notes-file "dist/release-notes-${{ github.ref_name }}.md" 
-            dist/*.zip 
-            dist/*.exe
+        run: gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes-file "dist/release-notes-v$env:PKG_VERSION.md" dist/*.zip dist/*.exe
