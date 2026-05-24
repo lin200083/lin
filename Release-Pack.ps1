@@ -81,6 +81,8 @@ $beginnerItems = @(
     "README.md",
     "LICENSE",
     "start-native.ps1",
+    "easy-start.ps1",
+    "双击我运行.bat",
     "Get-Status.ps1",
     "Measure-NativeSpeed.ps1",
     "Clean-Generated.ps1",
@@ -101,6 +103,8 @@ $sourceItems = @(
     "Measure-NativeSpeed.ps1",
     "Release-Pack.ps1",
     "start-native.ps1",
+    "easy-start.ps1",
+    "双击我运行.bat",
     "Upload-Release.ps1",
     "native\vanity-native\Cargo.lock",
     "native\vanity-native\Cargo.toml",
@@ -120,19 +124,14 @@ Copy-Item -LiteralPath $NativeExe -Destination $StandaloneExe -Force
 Set-Content -LiteralPath $ReleaseNotes -Encoding UTF8 -Value @"
 ## v$Version
 
-This release focuses on performance and packaging.
+### What's New
 
-### Changes
-
-- Reworked the native search loop to use a random starting private key plus sequential public-key point addition.
-- Improved observed throughput on the test machine from about 300k addresses/sec to about 2M addresses/sec with 12 workers.
-- Added packaging support for separate source and beginner Windows downloads.
-- Added generated-file cleanup helpers and ignore rules.
-- Updated README performance estimates and release file names.
+- **交互式引导脚本** (easy-start.ps1): 新增菜单式引导界面，小白用户无需记命令，一步步选择就能开跑。配套 `双击我运行.bat`，双击即可启动，无需打开 PowerShell。
+- 新手包现在包含 `easy-start.ps1` 和 `双击我运行.bat`，解压即用。
 
 ### Downloads
 
-- ``vanity-wallet-generator-windows-x64-v$Version.zip``: recommended for beginners. Unzip and run ``start-native.ps1``.
+- ``vanity-wallet-generator-windows-x64-v$Version.zip``: recommended for beginners. Unzip and double-click ``双击我运行.bat``.
 - ``vanity-wallet-generator-source-v$Version.zip``: source package for developers.
 - ``vanity-native-windows-x64-v$Version.exe``: standalone native executable.
 
