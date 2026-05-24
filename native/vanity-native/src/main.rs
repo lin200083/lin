@@ -1,10 +1,10 @@
 use chrono::Local;
+use clap::Parser;
 use rand::rngs::OsRng;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use secp256k1::{constants, PublicKey, Scalar, Secp256k1, SecretKey};
 use sha3::{Digest, Keccak256};
-use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -16,6 +16,47 @@ use std::time::{Duration, Instant};
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Clone)]
+
+#[derive(Parser)]
+#[command(name = "vanity-native")]
+#[command(about = "Native EVM vanity address generator")]
+struct Cli {
+    #[arg(long, default_value = "")]
+    prefix: String,
+
+    #[arg(long, default_value = "00000000")]
+    suffix: String,
+
+    #[arg(long, default_value_t = usize::max(1, num_cpus::get().saturating_sub(1)))]
+    workers: usize,
+
+    #[arg(long = "status-interval", default_value_t = 5)]
+    status_interval: u64,
+
+    #[arg(long = "batch-size", default_value_t = 1024)]
+    batch_size: usize,
+
+    #[arg(long = "max-seconds", default_value_t = 0)]
+    max_seconds: u64,
+
+    #[arg(long = "state-dir", default_value = "state")]
+    state_dir: PathBuf,
+
+    #[arg(long = "result-dir", default_value = "results")]
+    result_dir: PathBuf,
+
+    #[arg(long = "logs-dir", default_value = "logs")]
+    logs_dir: PathBuf,
+
+    #[arg(long = "case-sensitive", default_value_t = false)]
+    case_sensitive: bool,
+
+    #[arg(long = "redact-private-key", default_value_t = false)]
+    redact_private_key: bool,
+
+    #[arg(long = "plain-output", default_value_t = false)]
+    plain_output: bool,
+}
 struct Config {
     prefix: String,
     suffix: String,
@@ -62,7 +103,8 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let config = Arc::new(parse_args()?);
+    let cli = Cli::parse();
+    let config = Arc::new(build_config(cli)?);
     fs::create_dir_all(&config.state_dir).map_err(|e| format!("create state dir failed: {e}"))?;
     fs::create_dir_all(&config.result_dir).map_err(|e| format!("create result dir failed: {e}"))?;
     fs::create_dir_all(&config.logs_dir).map_err(|e| format!("create logs dir failed: {e}"))?;
@@ -224,7 +266,91 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn build_config(cli: Cli) -> Result<Config, String> {
+    let prefix = normalize_hex_pattern(&cli.prefix, "prefix", cli.case_sensitive)?;
+    let suffix = normalize_hex_pattern(&cli.suffix, "suffix", cli.case_sensitive)?;
+
+    if prefix.is_empty() && suffix.is_empty() {
+        return Err("at least one of prefix or suffix is required".to_string());
+    }
+
+    if prefix.len() + suffix.len() > 40 {
+        return Err(
+            "prefix plus suffix cannot exceed 40 hex characters for an EVM address".to_string(),
+        );
+    }
+
+    if cli.workers < 1 {
+        return Err("workers must be at least 1".to_string());
+    }
+
+    if cli.status_interval < 1 {
+        return Err("status-interval must be at least 1".to_string());
+    }
+
+    if cli.batch_size < 1 {
+        return Err("batch-size must be at least 1".to_string());
+    }
+
+    Ok(Config {
+        prefix_nibbles: hex_to_nibbles(&prefix)?,
+        suffix_nibbles: hex_to_nibbles(&suffix)?,
+        prefix,
+        suffix,
+        workers: cli.workers,
+        status_interval: Duration::from_secs(cli.status_interval),
+        batch_size: cli.batch_size,
+        case_sensitive: cli.case_sensitive,
+        redact_private_key: cli.redact_private_key,
+        plain_output: cli.plain_output,
+        max_seconds: cli.max_seconds,
+        state_dir: cli.state_dir,
+        result_dir: cli.result_dir,
+        logs_dir: cli.logs_dir,
+    })
+}
+
 fn worker_loop(
+    if prefix.is_empty() && suffix.is_empty() {
+        return Err("at least one of prefix or suffix is required".to_string());
+    }
+
+    if prefix.len() + suffix.len() > 40 {
+        return Err(
+            "prefix plus suffix cannot exceed 40 hex characters for an EVM address".to_string(),
+        );
+    }
+
+    if cli.workers < 1 {
+        return Err("workers must be at least 1".to_string());
+    }
+
+    if cli.status_interval < 1 {
+        return Err("status-interval must be at least 1".to_string());
+    }
+
+    if cli.batch_size < 1 {
+        return Err("batch-size must be at least 1".to_string());
+    }
+
+    Ok(Config {
+        prefix_nibbles: hex_to_nibbles(&prefix)?,
+        suffix_nibbles: hex_to_nibbles(&suffix)?,
+        prefix,
+        suffix,
+        workers: cli.workers,
+        status_interval: Duration::from_secs(cli.status_interval),
+        batch_size: cli.batch_size,
+        case_sensitive: cli.case_sensitive,
+        redact_private_key: cli.redact_private_key,
+        plain_output: cli.plain_output,
+        max_seconds: cli.max_seconds,
+        state_dir: cli.state_dir,
+        result_dir: cli.result_dir,
+        logs_dir: cli.logs_dir,
+    })
+}
+
     worker_id: usize,
     config: Arc<Config>,
     stop: Arc<AtomicBool>,
@@ -402,109 +528,153 @@ mod tests {
             public_key = public_key.combine(&generator_key).unwrap();
         }
     }
-}
 
-fn parse_args() -> Result<Config, String> {
-    let mut prefix = String::new();
-    let mut suffix = String::from("00000000");
-    let mut workers = usize::max(1, num_cpus::get().saturating_sub(1));
-    let mut status_interval_seconds = 5u64;
-    let mut batch_size = 1024usize;
-    let mut case_sensitive = false;
-    let mut redact_private_key = false;
-    let mut plain_output = false;
-    let mut max_seconds = 0u64;
-    let mut state_dir = PathBuf::from("state");
-    let mut result_dir = PathBuf::from("results");
-    let mut logs_dir = PathBuf::from("logs");
-
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    let mut index = 0usize;
-    while index < args.len() {
-        let key = args[index].as_str();
-        match key {
-            "--help" | "-h" => {
-                print_help();
-                std::process::exit(0);
-            }
-            "--prefix" => prefix = next_value(&args, &mut index, key)?,
-            "--suffix" => suffix = next_value(&args, &mut index, key)?,
-            "--workers" => {
-                workers = parse_positive::<usize>(&next_value(&args, &mut index, key)?, key)?
-            }
-            "--status-interval" => {
-                status_interval_seconds =
-                    parse_positive::<u64>(&next_value(&args, &mut index, key)?, key)?
-            }
-            "--batch-size" => {
-                batch_size = parse_positive::<usize>(&next_value(&args, &mut index, key)?, key)?
-            }
-            "--max-seconds" => {
-                max_seconds = parse_positive::<u64>(&next_value(&args, &mut index, key)?, key)?
-            }
-            "--state-dir" => state_dir = PathBuf::from(next_value(&args, &mut index, key)?),
-            "--result-dir" => result_dir = PathBuf::from(next_value(&args, &mut index, key)?),
-            "--logs-dir" => logs_dir = PathBuf::from(next_value(&args, &mut index, key)?),
-            "--case-sensitive" => case_sensitive = true,
-            "--redact-private-key" => redact_private_key = true,
-            "--plain-output" => plain_output = true,
-            other => return Err(format!("unknown argument: {other}")),
-        }
-
-        index += 1;
-    }
-
-    prefix = normalize_hex_pattern(&prefix, "prefix", case_sensitive)?;
-    suffix = normalize_hex_pattern(&suffix, "suffix", case_sensitive)?;
-
-    if prefix.is_empty() && suffix.is_empty() {
-        return Err("at least one of prefix or suffix is required".to_string());
-    }
-
-    if prefix.len() + suffix.len() > 40 {
-        return Err(
-            "prefix plus suffix cannot exceed 40 hex characters for an EVM address".to_string(),
+    #[test]
+    fn hex_to_nibbles_parses_all_digits() {
+        assert_eq!(
+            hex_to_nibbles("0123456789abcdef").unwrap(),
+            (0..16).collect::<Vec<u8>>()
         );
+        assert_eq!(hex_to_nibbles("ABCDEF").unwrap(), vec![10, 11, 12, 13, 14, 15]);
     }
 
-    Ok(Config {
-        prefix_nibbles: hex_to_nibbles(&prefix)?,
-        suffix_nibbles: hex_to_nibbles(&suffix)?,
-        prefix,
-        suffix,
-        workers,
-        status_interval: Duration::from_secs(status_interval_seconds),
-        batch_size,
-        case_sensitive,
-        redact_private_key,
-        plain_output,
-        max_seconds,
-        state_dir,
-        result_dir,
-        logs_dir,
-    })
-}
-
-fn next_value(args: &[String], index: &mut usize, key: &str) -> Result<String, String> {
-    *index += 1;
-    args.get(*index)
-        .cloned()
-        .ok_or_else(|| format!("{key} requires a value"))
-}
-
-fn parse_positive<T>(value: &str, key: &str) -> Result<T, String>
-where
-    T: std::str::FromStr + PartialOrd + From<u8>,
-{
-    let parsed = value
-        .parse::<T>()
-        .map_err(|_| format!("{key} must be a positive integer"))?;
-    if parsed < T::from(1) {
-        return Err(format!("{key} must be a positive integer"));
+    #[test]
+    fn hex_to_nibbles_rejects_invalid() {
+        assert!(hex_to_nibbles("gh").is_err());
+        assert!(hex_to_nibbles("0x").is_err());
     }
-    Ok(parsed)
-}
 
+    #[test]
+    fn normalize_hex_pattern_strips_0x() {
+        assert_eq!(normalize_hex_pattern("0xAbC", "test", false).unwrap(), "abc");
+        assert_eq!(normalize_hex_pattern("0x123", "test", false).unwrap(), "123");
+    }
+
+    #[test]
+    fn normalize_hex_pattern_preserves_case() {
+        assert_eq!(normalize_hex_pattern("0xAbC", "test", true).unwrap(), "AbC");
+    }
+
+    #[test]
+    fn normalize_hex_pattern_rejects_invalid() {
+        assert!(normalize_hex_pattern("xyz", "test", false).is_err());
+        assert!(normalize_hex_pattern("0xGG", "test", false).is_err());
+    }
+
+    #[test]
+    fn keccak_output_length() {
+        let hash = keccak(b"hello");
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn keccak_is_deterministic() {
+        assert_eq!(keccak(b"test"), keccak(b"test"));
+    }
+
+    #[test]
+    fn keccak_differs_on_input() {
+        assert_ne!(keccak(b"a"), keccak(b"b"));
+    }
+
+    #[test]
+    fn address_nibble_positions() {
+        let mut hash = [0u8; 32];
+        hash[12] = 0xAB;
+        hash[13] = 0xCD;
+
+        assert_eq!(address_nibble(&hash, 0), 0xA);
+        assert_eq!(address_nibble(&hash, 1), 0xB);
+        assert_eq!(address_nibble(&hash, 2), 0xC);
+        assert_eq!(address_nibble(&hash, 3), 0xD);
+    }
+
+    #[test]
+    fn matches_address_hash_prefix() {
+        let config = Config {
+            prefix: "abc".into(),
+            suffix: String::new(),
+            prefix_nibbles: vec![0xA, 0xB, 0xC],
+            suffix_nibbles: vec![],
+            workers: 1,
+            status_interval: Duration::from_secs(5),
+            batch_size: 1024,
+            case_sensitive: false,
+            redact_private_key: false,
+            plain_output: false,
+            max_seconds: 0,
+            state_dir: PathBuf::from("state"),
+            result_dir: PathBuf::from("results"),
+            logs_dir: PathBuf::from("logs"),
+        };
+
+        let mut hash = [0u8; 32];
+        hash[12] = 0xAB;
+        hash[13] = 0xC0;
+
+        assert!(matches_address_hash(&hash, &config));
+
+        hash[12] = 0xBB;
+        assert!(!matches_address_hash(&hash, &config));
+    }
+
+    #[test]
+    fn matches_address_hash_suffix() {
+        let config = Config {
+            prefix: String::new(),
+            suffix: "de".into(),
+            prefix_nibbles: vec![],
+            suffix_nibbles: vec![0xD, 0xE],
+            workers: 1,
+            status_interval: Duration::from_secs(5),
+            batch_size: 1024,
+            case_sensitive: false,
+            redact_private_key: false,
+            plain_output: false,
+            max_seconds: 0,
+            state_dir: PathBuf::from("state"),
+            result_dir: PathBuf::from("results"),
+            logs_dir: PathBuf::from("logs"),
+        };
+
+        let mut hash = [0u8; 32];
+        hash[31] = 0xDE;
+
+        assert!(matches_address_hash(&hash, &config));
+
+        hash[31] = 0xDF;
+        assert!(!matches_address_hash(&hash, &config));
+    }
+
+    #[test]
+    fn checksum_body_changes_case() {
+        let body = "abc123def456";
+        let checksummed = checksum_body(body);
+        assert_eq!(checksummed.len(), body.len());
+        let lower = checksummed.to_ascii_lowercase();
+        assert_eq!(lower, body);
+    }
+
+    #[test]
+    fn format_duration_output() {
+        assert_eq!(format_duration(Duration::from_secs(0)), "00:00:00");
+        assert_eq!(format_duration(Duration::from_secs(61)), "00:01:01");
+        assert_eq!(format_duration(Duration::from_secs(3661)), "01:01:01");
+    }
+
+    #[test]
+    fn format_number_output() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(1000), "1,000");
+        assert_eq!(format_number(1234567), "1,234,567");
+    }
+
+    #[test]
+    fn display_pattern_empty_is_dash() {
+        assert_eq!(display_pattern(""), "-");
+        assert_eq!(display_pattern("abc"), "abc");
+    }
+}
 fn normalize_hex_pattern(value: &str, name: &str, preserve_case: bool) -> Result<String, String> {
     let mut normalized = value.trim().to_string();
     if normalized.to_ascii_lowercase().starts_with("0x") {
@@ -947,20 +1117,3 @@ fn checksum_sensitive_letter_count(config: &Config) -> usize {
         .count()
 }
 
-fn print_help() {
-    println!("vanity-native.exe --suffix 00000000 --workers 8");
-    println!();
-    println!("Options:");
-    println!("  --prefix <hex>");
-    println!("  --suffix <hex>");
-    println!("  --workers <number>");
-    println!("  --status-interval <seconds>");
-    println!("  --batch-size <number>");
-    println!("  --max-seconds <seconds>");
-    println!("  --state-dir <path>");
-    println!("  --result-dir <path>");
-    println!("  --logs-dir <path>");
-    println!("  --case-sensitive");
-    println!("  --redact-private-key");
-    println!("  --plain-output");
-}

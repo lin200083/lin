@@ -456,13 +456,13 @@ PrivateKey  私钥，可以导入钱包，也可以控制资产
 如果不想自己编译，可以去 GitHub Releases 下载 Windows 版：
 
 ```text
-https://github.com/lin200083/vanity-wallet-generator/releases/tag/v1.1.0
+https://github.com/lin200083/vanity-wallet-generator/releases/latest
 ```
 
 新手推荐下载这个 zip：
 
 ```text
-vanity-wallet-generator-windows-x64-v1.1.0.zip
+vanity-wallet-generator-windows-x64-vX.Y.Z.zip
 ```
 
 解压后进入文件夹，运行：
@@ -474,7 +474,7 @@ vanity-wallet-generator-windows-x64-v1.1.0.zip
 如果只想单独下载 exe，也可以下载：
 
 ```text
-vanity-native-windows-x64-v1.1.0.exe
+vanity-native-windows-x64-vX.Y.Z.exe
 ```
 
 单独下载 exe 后，需要放到项目的 `bin` 目录，并改名为：

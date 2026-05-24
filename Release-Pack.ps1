@@ -1,11 +1,25 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "1.1.0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path $PSScriptRoot).Path
+
+if ($Version -eq "") {
+    $cargoToml = Join-Path $ProjectRoot "native\vanity-native\Cargo.toml"
+    if (Test-Path $cargoToml) {
+        $cargoContent = Get-Content -Raw $cargoToml
+        if ($cargoContent -match 'version\s*=\s*"([^"]+)"') {
+            $Version = $Matches[1]
+        }
+    }
+    if ($Version -eq "") {
+        throw "Could not detect version from Cargo.toml. Specify -Version explicitly."
+    }
+}
+
 $DistDir = Join-Path $ProjectRoot "dist"
 $StagingDir = Join-Path $DistDir "staging"
 $BeginnerName = "vanity-wallet-generator-windows-x64-v$Version"
@@ -118,9 +132,9 @@ This release focuses on performance and packaging.
 
 ### Downloads
 
-- `vanity-wallet-generator-windows-x64-v$Version.zip`: recommended for beginners. Unzip and run `start-native.ps1`.
-- `vanity-wallet-generator-source-v$Version.zip`: source package for developers.
-- `vanity-native-windows-x64-v$Version.exe`: standalone native executable.
+- ``vanity-wallet-generator-windows-x64-v$Version.zip``: recommended for beginners. Unzip and run ``start-native.ps1``.
+- ``vanity-wallet-generator-source-v$Version.zip``: source package for developers.
+- ``vanity-native-windows-x64-v$Version.exe``: standalone native executable.
 
 ### Safety
 
