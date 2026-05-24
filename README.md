@@ -1,3 +1,5 @@
+[English](README_EN.md) | [中文](README.md)
+
 # Vanity Wallet Generator 使用说明
 
 这是一个在 Windows 上运行的 **EVM 靓号钱包地址生成器**。
