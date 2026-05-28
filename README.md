@@ -92,3 +92,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 | 🔑 命中了没有私钥？ | 检查是否误加了 `-RedactPrivateKey` |
 | 🦀 找不到 Rust/Cargo？ | 已预编译 `bin\vanity-native.exe`，直接运行 |
 | 📂 怎么看结果？ | 打开 `results\matched-wallet-latest.txt`，**备份 PrivateKey** |
+
+## ✏️ 在线修改测试
+
+这行是通过 GitHub API 在线添加的，没有克隆到本地！
