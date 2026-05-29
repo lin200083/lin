@@ -1,99 +1,23 @@
-use chrono::Local;
-use clap::Parser;
-use rand::rngs::OsRng;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
-use secp256k1::{constants, PublicKey, Scalar, Secp256k1, SecretKey};
-use sha3::{Digest, Keccak256};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+mod cli;
+mod config;
+mod crypto;
+mod error;
+mod output;
+mod worker;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
+use clap::Parser;
+use chrono::Local;
 
-#[derive(Clone)]
-
-#[derive(Parser)]
-#[command(name = "vanity-native")]
-#[command(about = "Native EVM vanity address generator")]
-struct Cli {
-    #[arg(long, default_value = "")]
-    prefix: String,
-
-    #[arg(long, default_value = "00000000")]
-    suffix: String,
-
-    #[arg(long, default_value_t = usize::max(1, num_cpus::get().saturating_sub(1)))]
-    workers: usize,
-
-    #[arg(long = "status-interval", default_value_t = 5)]
-    status_interval: u64,
-
-    #[arg(long = "batch-size", default_value_t = 1024)]
-    batch_size: usize,
-
-    #[arg(long = "max-seconds", default_value_t = 0)]
-    max_seconds: u64,
-
-    #[arg(long = "state-dir", default_value = "state")]
-    state_dir: PathBuf,
-
-    #[arg(long = "result-dir", default_value = "results")]
-    result_dir: PathBuf,
-
-    #[arg(long = "logs-dir", default_value = "logs")]
-    logs_dir: PathBuf,
-
-    #[arg(long = "case-sensitive", default_value_t = false)]
-    case_sensitive: bool,
-
-    #[arg(long = "redact-private-key", default_value_t = false)]
-    redact_private_key: bool,
-
-    #[arg(long = "plain-output", default_value_t = false)]
-    plain_output: bool,
-}
-struct Config {
-    prefix: String,
-    suffix: String,
-    prefix_nibbles: Vec<u8>,
-    suffix_nibbles: Vec<u8>,
-    workers: usize,
-    status_interval: Duration,
-    batch_size: usize,
-    case_sensitive: bool,
-    redact_private_key: bool,
-    plain_output: bool,
-    max_seconds: u64,
-    state_dir: PathBuf,
-    result_dir: PathBuf,
-    logs_dir: PathBuf,
-}
-
-struct ThreadState {
-    attempts: AtomicU64,
-    alive: AtomicBool,
-}
-
-struct MatchResult {
-    address: String,
-    private_key: String,
-    worker_id: usize,
-    worker_attempts: u64,
-    found_at: String,
-}
-
-struct StatusSnapshot {
-    attempts: u64,
-    rate: u64,
-    runtime: String,
-    alive_workers: usize,
-    matched: bool,
-}
+use cli::Cli;
+use config::Config;
+use error::Result;
+use output::{self, MatchResult, StatusSnapshot};
+use worker::ThreadState;
 
 fn main() {
     if let Err(error) = run() {
@@ -102,24 +26,24 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = Arc::new(build_config(cli)?);
-    fs::create_dir_all(&config.state_dir).map_err(|e| format!("create state dir failed: {e}"))?;
-    fs::create_dir_all(&config.result_dir).map_err(|e| format!("create result dir failed: {e}"))?;
-    fs::create_dir_all(&config.logs_dir).map_err(|e| format!("create logs dir failed: {e}"))?;
+    let config = Arc::new(Config::from_cli(cli)?);
+    std::fs::create_dir_all(&config.state_dir)?;
+    std::fs::create_dir_all(&config.result_dir)?;
+    std::fs::create_dir_all(&config.logs_dir)?;
 
     let run_id = Local::now().format("%Y%m%d-%H%M%S%3f").to_string();
-    log_event(
+    output::log_event(
         &config,
         &format!(
             "run {run_id} started prefix={} suffix={} workers={}",
-            display_pattern(&config.prefix),
-            display_pattern(&config.suffix),
+            output::display_pattern(&config.prefix),
+            output::display_pattern(&config.suffix),
             config.workers
         ),
     )?;
-    print_banner(&config, &run_id);
+    output::print_banner(&config, &run_id);
 
     let stop = Arc::new(AtomicBool::new(false));
     let interrupted = Arc::new(AtomicBool::new(false));
@@ -128,7 +52,7 @@ fn run() -> Result<(), String> {
     let states = Arc::new(
         (0..config.workers)
             .map(|_| ThreadState {
-                attempts: AtomicU64::new(0),
+                attempts: std::sync::atomic::AtomicU64::new(0),
                 alive: AtomicBool::new(false),
             })
             .collect::<Vec<_>>(),
@@ -153,7 +77,7 @@ fn run() -> Result<(), String> {
         let worker_states = Arc::clone(&states);
 
         handles.push(thread::spawn(move || {
-            worker_loop(
+            worker::worker_loop(
                 worker_index + 1,
                 worker_config,
                 worker_stop,
@@ -194,7 +118,7 @@ fn run() -> Result<(), String> {
         }
 
         if Instant::now() >= next_status {
-            let attempts = total_attempts(&states);
+            let attempts = worker::total_attempts(&states);
             let elapsed = last_status_at.elapsed().as_secs_f64().max(0.001);
             last_rate = ((attempts.saturating_sub(last_attempts)) as f64 / elapsed).round() as u64;
             last_attempts = attempts;
@@ -203,17 +127,17 @@ fn run() -> Result<(), String> {
             let snapshot = StatusSnapshot {
                 attempts,
                 rate: last_rate,
-                runtime: format_duration(started.elapsed()),
-                alive_workers: alive_workers(&states),
+                runtime: output::format_duration(started.elapsed()),
+                alive_workers: worker::alive_workers(&states),
                 matched: false,
             };
 
-            write_status(&config, &run_id, &snapshot)?;
-            print_status(&config, &snapshot, &mut last_live_len)?;
+            output::write_status(&config, &run_id, &snapshot)?;
+            output::print_status(&config, &snapshot, &mut last_live_len)?;
             next_status += config.status_interval;
         }
 
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(std::time::Duration::from_millis(50));
     }
 
     stop.store(true, Ordering::SeqCst);
@@ -221,25 +145,25 @@ fn run() -> Result<(), String> {
         let _ = handle.join();
     }
 
-    finish_live_line(&config, &mut last_live_len)?;
+    output::finish_live_line(&config, &mut last_live_len)?;
 
-    let final_attempts = total_attempts(&states);
+    let final_attempts = worker::total_attempts(&states);
     let final_snapshot = StatusSnapshot {
         attempts: final_attempts,
         rate: last_rate,
-        runtime: format_duration(started.elapsed()),
-        alive_workers: alive_workers(&states),
+        runtime: output::format_duration(started.elapsed()),
+        alive_workers: worker::alive_workers(&states),
         matched: found.load(Ordering::Relaxed),
     };
-    write_status(&config, &run_id, &final_snapshot)?;
+    output::write_status(&config, &run_id, &final_snapshot)?;
 
     let result = match_result
         .lock()
         .map_err(|_| "match result lock poisoned".to_string())?
         .take();
     if let Some(result) = result {
-        let result_path = write_result(&config, &run_id, &result, final_attempts)?;
-        log_event(
+        let result_path = output::write_result(&config, &run_id, &result, final_attempts)?;
+        output::log_event(
             &config,
             &format!(
                 "match found address={} result={}",
@@ -251,12 +175,12 @@ fn run() -> Result<(), String> {
         println!("Address: {}", result.address);
         println!("Result:  {}", result_path.display());
     } else {
-        log_event(
+        output::log_event(
             &config,
             &format!("run {run_id} stopping: {stop_reason} attempts={final_attempts}"),
         )?;
         println!("Stopped: {stop_reason}");
-        println!("Attempts: {}", format_number(final_attempts));
+        println!("Attempts: {}", output::format_number(final_attempts));
     }
 
     if interrupted.load(Ordering::Relaxed) {
@@ -266,259 +190,45 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn build_config(cli: Cli) -> Result<Config, String> {
-    let prefix = normalize_hex_pattern(&cli.prefix, "prefix", cli.case_sensitive)?;
-    let suffix = normalize_hex_pattern(&cli.suffix, "suffix", cli.case_sensitive)?;
-
-    if prefix.is_empty() && suffix.is_empty() {
-        return Err("at least one of prefix or suffix is required".to_string());
-    }
-
-    if prefix.len() + suffix.len() > 40 {
-        return Err(
-            "prefix plus suffix cannot exceed 40 hex characters for an EVM address".to_string(),
-        );
-    }
-
-    if cli.workers < 1 {
-        return Err("workers must be at least 1".to_string());
-    }
-
-    if cli.status_interval < 1 {
-        return Err("status-interval must be at least 1".to_string());
-    }
-
-    if cli.batch_size < 1 {
-        return Err("batch-size must be at least 1".to_string());
-    }
-
-    Ok(Config {
-        prefix_nibbles: hex_to_nibbles(&prefix)?,
-        suffix_nibbles: hex_to_nibbles(&suffix)?,
-        prefix,
-        suffix,
-        workers: cli.workers,
-        status_interval: Duration::from_secs(cli.status_interval),
-        batch_size: cli.batch_size,
-        case_sensitive: cli.case_sensitive,
-        redact_private_key: cli.redact_private_key,
-        plain_output: cli.plain_output,
-        max_seconds: cli.max_seconds,
-        state_dir: cli.state_dir,
-        result_dir: cli.result_dir,
-        logs_dir: cli.logs_dir,
-    })
-}
-
-fn worker_loop(
-    worker_id: usize,
-    config: Arc<Config>,
-    stop: Arc<AtomicBool>,
-    found: Arc<AtomicBool>,
-    match_result: Arc<Mutex<Option<MatchResult>>>,
-    states: Arc<Vec<ThreadState>>,
-) {
-    let secp = Secp256k1::new();
-    let mut seed = <ChaCha20Rng as SeedableRng>::Seed::default();
-    OsRng.fill_bytes(&mut seed);
-    let mut rng = ChaCha20Rng::from_seed(seed);
-    let generator_key = generator_public_key(&secp);
-    let (mut sequence_secret_key, mut public_key) = random_sequence_start(&secp, &mut rng);
-    let mut sequence_offset = 0u64;
-    let mut attempts = 0u64;
-    states[worker_id - 1].alive.store(true, Ordering::SeqCst);
-
-    while !stop.load(Ordering::Relaxed) && !found.load(Ordering::Relaxed) {
-        for _ in 0..config.batch_size {
-            if stop.load(Ordering::Relaxed) || found.load(Ordering::Relaxed) {
-                break;
-            }
-
-            attempts = attempts.wrapping_add(1);
-
-            let serialized = public_key.serialize_uncompressed();
-            let hash = keccak(&serialized[1..]);
-
-            if !matches_address_hash(&hash, &config) {
-                advance_sequence(
-                    &secp,
-                    &generator_key,
-                    &mut sequence_secret_key,
-                    &mut public_key,
-                    &mut sequence_offset,
-                    &mut rng,
-                );
-                continue;
-            }
-
-            let address_body = last20_to_hex(&hash);
-            let comparable_body = if config.case_sensitive {
-                checksum_body(&address_body)
-            } else {
-                address_body.clone()
-            };
-
-            if !matches_address_body(&comparable_body, &config) {
-                advance_sequence(
-                    &secp,
-                    &generator_key,
-                    &mut sequence_secret_key,
-                    &mut public_key,
-                    &mut sequence_offset,
-                    &mut rng,
-                );
-                continue;
-            }
-
-            let private_key = sequence_private_key(&sequence_secret_key, sequence_offset);
-            states[worker_id - 1]
-                .attempts
-                .store(attempts, Ordering::Relaxed);
-            if !found.swap(true, Ordering::SeqCst) {
-                stop.store(true, Ordering::SeqCst);
-                let address = format!("0x{}", checksum_body(&address_body));
-                let result = MatchResult {
-                    address,
-                    private_key: format!("0x{}", bytes_to_hex(&private_key)),
-                    worker_id,
-                    worker_attempts: attempts,
-                    found_at: Local::now().to_rfc3339(),
-                };
-
-                if let Ok(mut slot) = match_result.lock() {
-                    *slot = Some(result);
-                }
-            }
-
-            states[worker_id - 1].alive.store(false, Ordering::SeqCst);
-            return;
-        }
-
-        states[worker_id - 1]
-            .attempts
-            .store(attempts, Ordering::Relaxed);
-    }
-
-    states[worker_id - 1].alive.store(false, Ordering::SeqCst);
-    states[worker_id - 1]
-        .attempts
-        .store(attempts, Ordering::Relaxed);
-}
-
-fn random_sequence_start(
-    secp: &Secp256k1<secp256k1::All>,
-    rng: &mut ChaCha20Rng,
-) -> (SecretKey, PublicKey) {
-    let mut private_key = [0u8; 32];
-    loop {
-        rng.fill_bytes(&mut private_key);
-        if let Ok(secret_key) = SecretKey::from_byte_array(private_key) {
-            let public_key = PublicKey::from_secret_key(secp, &secret_key);
-            return (secret_key, public_key);
-        }
-    }
-}
-
-fn generator_public_key(secp: &Secp256k1<secp256k1::All>) -> PublicKey {
-    let secret_key = SecretKey::from_byte_array(constants::ONE).expect("curve one is valid");
-    PublicKey::from_secret_key(secp, &secret_key)
-}
-
-fn advance_sequence(
-    secp: &Secp256k1<secp256k1::All>,
-    generator_key: &PublicKey,
-    sequence_secret_key: &mut SecretKey,
-    public_key: &mut PublicKey,
-    sequence_offset: &mut u64,
-    rng: &mut ChaCha20Rng,
-) {
-    if *sequence_offset == u64::MAX {
-        (*sequence_secret_key, *public_key) = random_sequence_start(secp, rng);
-        *sequence_offset = 0;
-        return;
-    }
-
-    match public_key.combine(generator_key) {
-        Ok(next_public_key) => {
-            *public_key = next_public_key;
-            *sequence_offset += 1;
-        }
-        Err(_) => {
-            (*sequence_secret_key, *public_key) = random_sequence_start(secp, rng);
-            *sequence_offset = 0;
-        }
-    }
-}
-
-fn sequence_private_key(sequence_secret_key: &SecretKey, sequence_offset: u64) -> [u8; 32] {
-    if sequence_offset == 0 {
-        return sequence_secret_key.secret_bytes();
-    }
-
-    let mut offset_bytes = [0u8; 32];
-    offset_bytes[24..].copy_from_slice(&sequence_offset.to_be_bytes());
-    let offset = Scalar::from_be_bytes(offset_bytes).expect("u64 offset is a valid scalar");
-    sequence_secret_key
-        .add_tweak(&offset)
-        .expect("active sequence private key is valid")
-        .secret_bytes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto::*;
 
     #[test]
     fn sequence_private_key_matches_incremented_public_key() {
-        let secp = Secp256k1::new();
-        let mut rng = ChaCha20Rng::from_seed([7u8; 32]);
-        let generator_key = generator_public_key(&secp);
-        let (sequence_secret_key, mut public_key) = random_sequence_start(&secp, &mut rng);
+        let ctx = CryptoContext::new();
+        let mut rng = rand_chacha::ChaCha20Rng::from_seed([7u8; 32]);
+        let (sequence_secret_key, mut public_key) =
+            random_sequence_start(ctx.secp(), &mut rng);
 
         for offset in 0..128u64 {
             let private_key = sequence_private_key(&sequence_secret_key, offset);
-            let secret_key = SecretKey::from_byte_array(private_key).unwrap();
-            let derived_public_key = PublicKey::from_secret_key(&secp, &secret_key);
+            let secret_key =
+                secp256k1::SecretKey::from_byte_array(private_key).unwrap();
+            let derived_public_key =
+                secp256k1::PublicKey::from_secret_key(ctx.secp(), &secret_key);
 
             assert_eq!(
                 derived_public_key.serialize_uncompressed(),
                 public_key.serialize_uncompressed()
             );
 
-            public_key = public_key.combine(&generator_key).unwrap();
+            public_key = public_key.combine(ctx.generator_key()).unwrap();
         }
     }
 
     #[test]
     fn hex_to_nibbles_parses_all_digits() {
+        use config::hex_to_nibbles;
         assert_eq!(
             hex_to_nibbles("0123456789abcdef").unwrap(),
             (0..16).collect::<Vec<u8>>()
         );
-        assert_eq!(hex_to_nibbles("ABCDEF").unwrap(), vec![10, 11, 12, 13, 14, 15]);
-    }
-
-    #[test]
-    fn hex_to_nibbles_rejects_invalid() {
-        assert!(hex_to_nibbles("gh").is_err());
-        assert!(hex_to_nibbles("0x").is_err());
-    }
-
-    #[test]
-    fn normalize_hex_pattern_strips_0x() {
-        assert_eq!(normalize_hex_pattern("0xAbC", "test", false).unwrap(), "abc");
-        assert_eq!(normalize_hex_pattern("0x123", "test", false).unwrap(), "123");
-    }
-
-    #[test]
-    fn normalize_hex_pattern_preserves_case() {
-        assert_eq!(normalize_hex_pattern("0xAbC", "test", true).unwrap(), "AbC");
-    }
-
-    #[test]
-    fn normalize_hex_pattern_rejects_invalid() {
-        assert!(normalize_hex_pattern("xyz", "test", false).is_err());
-        assert!(normalize_hex_pattern("0xGG", "test", false).is_err());
+        assert_eq!(
+            hex_to_nibbles("ABCDEF").unwrap(),
+            vec![10, 11, 12, 13, 14, 15]
+        );
     }
 
     #[test]
@@ -551,59 +261,25 @@ mod tests {
 
     #[test]
     fn matches_address_hash_prefix() {
-        let config = Config {
-            prefix: "abc".into(),
-            suffix: String::new(),
-            prefix_nibbles: vec![0xA, 0xB, 0xC],
-            suffix_nibbles: vec![],
-            workers: 1,
-            status_interval: Duration::from_secs(5),
-            batch_size: 1024,
-            case_sensitive: false,
-            redact_private_key: false,
-            plain_output: false,
-            max_seconds: 0,
-            state_dir: PathBuf::from("state"),
-            result_dir: PathBuf::from("results"),
-            logs_dir: PathBuf::from("logs"),
-        };
-
         let mut hash = [0u8; 32];
         hash[12] = 0xAB;
         hash[13] = 0xC0;
 
-        assert!(matches_address_hash(&hash, &config));
+        assert!(matches_address_hash(&hash, &[0xA, 0xB, 0xC], &[]));
 
         hash[12] = 0xBB;
-        assert!(!matches_address_hash(&hash, &config));
+        assert!(!matches_address_hash(&hash, &[0xA, 0xB, 0xC], &[]));
     }
 
     #[test]
     fn matches_address_hash_suffix() {
-        let config = Config {
-            prefix: String::new(),
-            suffix: "de".into(),
-            prefix_nibbles: vec![],
-            suffix_nibbles: vec![0xD, 0xE],
-            workers: 1,
-            status_interval: Duration::from_secs(5),
-            batch_size: 1024,
-            case_sensitive: false,
-            redact_private_key: false,
-            plain_output: false,
-            max_seconds: 0,
-            state_dir: PathBuf::from("state"),
-            result_dir: PathBuf::from("results"),
-            logs_dir: PathBuf::from("logs"),
-        };
-
         let mut hash = [0u8; 32];
         hash[31] = 0xDE;
 
-        assert!(matches_address_hash(&hash, &config));
+        assert!(matches_address_hash(&hash, &[], &[0xD, 0xE]));
 
         hash[31] = 0xDF;
-        assert!(!matches_address_hash(&hash, &config));
+        assert!(!matches_address_hash(&hash, &[], &[0xD, 0xE]));
     }
 
     #[test]
@@ -617,463 +293,22 @@ mod tests {
 
     #[test]
     fn format_duration_output() {
-        assert_eq!(format_duration(Duration::from_secs(0)), "00:00:00");
-        assert_eq!(format_duration(Duration::from_secs(61)), "00:01:01");
-        assert_eq!(format_duration(Duration::from_secs(3661)), "01:01:01");
+        use std::time::Duration;
+        assert_eq!(output::format_duration(Duration::from_secs(0)), "00:00:00");
+        assert_eq!(output::format_duration(Duration::from_secs(61)), "00:01:01");
+        assert_eq!(output::format_duration(Duration::from_secs(3661)), "01:01:01");
     }
 
     #[test]
     fn format_number_output() {
-        assert_eq!(format_number(0), "0");
-        assert_eq!(format_number(1000), "1,000");
-        assert_eq!(format_number(1234567), "1,234,567");
+        assert_eq!(output::format_number(0), "0");
+        assert_eq!(output::format_number(1000), "1,000");
+        assert_eq!(output::format_number(1234567), "1,234,567");
     }
 
     #[test]
     fn display_pattern_empty_is_dash() {
-        assert_eq!(display_pattern(""), "-");
-        assert_eq!(display_pattern("abc"), "abc");
+        assert_eq!(output::display_pattern(""), "-");
+        assert_eq!(output::display_pattern("abc"), "abc");
     }
 }
-fn normalize_hex_pattern(value: &str, name: &str, preserve_case: bool) -> Result<String, String> {
-    let mut normalized = value.trim().to_string();
-    if normalized.to_ascii_lowercase().starts_with("0x") {
-        normalized = normalized[2..].to_string();
-    }
-
-    if !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(format!(
-            "{name} must contain only hexadecimal characters, optionally prefixed by 0x"
-        ));
-    }
-
-    if preserve_case {
-        Ok(normalized)
-    } else {
-        Ok(normalized.to_ascii_lowercase())
-    }
-}
-
-fn hex_to_nibbles(value: &str) -> Result<Vec<u8>, String> {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            b'A'..=b'F' => Ok(byte - b'A' + 10),
-            _ => Err("invalid hex character".to_string()),
-        })
-        .collect()
-}
-
-fn matches_address_hash(hash: &[u8; 32], config: &Config) -> bool {
-    for (index, expected) in config.prefix_nibbles.iter().enumerate() {
-        if address_nibble(hash, index) != *expected {
-            return false;
-        }
-    }
-
-    let suffix_start = 40usize.saturating_sub(config.suffix_nibbles.len());
-    for (index, expected) in config.suffix_nibbles.iter().enumerate() {
-        if address_nibble(hash, suffix_start + index) != *expected {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn matches_address_body(address_body: &str, config: &Config) -> bool {
-    (config.prefix.is_empty() || address_body.starts_with(&config.prefix))
-        && (config.suffix.is_empty() || address_body.ends_with(&config.suffix))
-}
-
-fn address_nibble(hash: &[u8; 32], address_nibble_index: usize) -> u8 {
-    let byte = hash[12 + (address_nibble_index >> 1)];
-    if address_nibble_index.is_multiple_of(2) {
-        byte >> 4
-    } else {
-        byte & 0x0f
-    }
-}
-
-fn keccak(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = Keccak256::new();
-    hasher.update(bytes);
-    hasher.finalize().into()
-}
-
-fn last20_to_hex(hash: &[u8; 32]) -> String {
-    let mut output = String::with_capacity(40);
-    for byte in &hash[12..32] {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn checksum_body(address_body: &str) -> String {
-    let hash = keccak(address_body.as_bytes());
-    let mut output = String::with_capacity(address_body.len());
-
-    for (index, byte) in address_body.bytes().enumerate() {
-        let hash_byte = hash[index >> 1];
-        let nibble = if index % 2 == 0 {
-            hash_byte >> 4
-        } else {
-            hash_byte & 0x0f
-        };
-
-        if (b'a'..=b'f').contains(&byte) && nibble >= 8 {
-            output.push((byte - 32) as char);
-        } else {
-            output.push(byte as char);
-        }
-    }
-
-    output
-}
-
-fn print_banner(config: &Config, run_id: &str) {
-    println!("Native EVM vanity search");
-    println!("Run ID: {run_id}");
-    println!(
-        "Target: prefix '{}' suffix '{}'",
-        display_pattern(&config.prefix),
-        display_pattern(&config.suffix)
-    );
-    println!("Workers: {}", config.workers);
-    println!(
-        "Average attempts estimate: {}",
-        average_attempts_text(config)
-    );
-    if !config.plain_output {
-        println!("Status updates will refresh on one line. Use -PlainOutput for scrolling output.");
-    }
-}
-
-fn print_status(
-    config: &Config,
-    snapshot: &StatusSnapshot,
-    last_live_len: &mut usize,
-) -> Result<(), String> {
-    let line = format!(
-        "[{}] attempts={} rate={}/s runtime={} workers={}/{}",
-        Local::now().format("%H:%M:%S"),
-        format_number(snapshot.attempts),
-        format_number(snapshot.rate),
-        snapshot.runtime,
-        snapshot.alive_workers,
-        config.workers
-    );
-
-    if config.plain_output {
-        println!("{line}");
-    } else {
-        let padding = last_live_len.saturating_sub(line.len());
-        print!("\r{line}{}", " ".repeat(padding));
-        io::stdout()
-            .flush()
-            .map_err(|e| format!("flush stdout failed: {e}"))?;
-        *last_live_len = line.len();
-    }
-
-    Ok(())
-}
-
-fn finish_live_line(config: &Config, last_live_len: &mut usize) -> Result<(), String> {
-    if config.plain_output || *last_live_len == 0 {
-        return Ok(());
-    }
-
-    print!("\r{}\r\n", " ".repeat(*last_live_len));
-    io::stdout()
-        .flush()
-        .map_err(|e| format!("flush stdout failed: {e}"))?;
-    *last_live_len = 0;
-    Ok(())
-}
-
-fn write_status(config: &Config, run_id: &str, snapshot: &StatusSnapshot) -> Result<(), String> {
-    let json = format!(
-        concat!(
-            "{{\n",
-            "  \"runId\": \"{}\",\n",
-            "  \"updatedAt\": \"{}\",\n",
-            "  \"matched\": {},\n",
-            "  \"engine\": \"native-rust\",\n",
-            "  \"pattern\": {{\n",
-            "    \"prefix\": \"{}\",\n",
-            "    \"suffix\": \"{}\",\n",
-            "    \"caseSensitive\": {}\n",
-            "  }},\n",
-            "  \"totalAttempts\": {},\n",
-            "  \"totalRatePerSecond\": {},\n",
-            "  \"runtime\": \"{}\",\n",
-            "  \"aliveWorkers\": {},\n",
-            "  \"configuredWorkers\": {},\n",
-            "  \"totalRestarts\": 0\n",
-            "}}\n"
-        ),
-        run_id,
-        Local::now().to_rfc3339(),
-        snapshot.matched,
-        config.prefix,
-        config.suffix,
-        config.case_sensitive,
-        snapshot.attempts,
-        snapshot.rate,
-        snapshot.runtime,
-        snapshot.alive_workers,
-        config.workers,
-    );
-
-    atomic_write(&config.state_dir.join("status.json"), json.as_bytes())
-}
-
-fn write_result(
-    config: &Config,
-    run_id: &str,
-    result: &MatchResult,
-    total_attempts: u64,
-) -> Result<PathBuf, String> {
-    let result_path = config
-        .result_dir
-        .join(format!("matched-wallet-native-{run_id}.txt"));
-    let private_key = if config.redact_private_key {
-        String::from("[redacted by --redact-private-key]")
-    } else {
-        result.private_key.clone()
-    };
-
-    let body = format!(
-        concat!(
-            "EVM Vanity Wallet Match\n\n",
-            "Engine: native-rust\n",
-            "RunId: {}\n",
-            "FoundAt: {}\n",
-            "Address: {}\n",
-            "PrivateKey: {}\n",
-            "Prefix: {}\n",
-            "Suffix: {}\n",
-            "CaseSensitive: {}\n",
-            "EstimatedAverageAttempts: {}\n",
-            "TotalAttemptsObserved: {}\n",
-            "WorkerId: {}\n",
-            "WorkerAttemptsThisRun: {}\n\n",
-            "Security notes:\n",
-            "- Keep the private key offline and never paste it into websites.\n",
-            "- Fund the address only after you have backed up the private key.\n",
-            "- Anyone who sees this private key can spend funds from this address.\n"
-        ),
-        run_id,
-        result.found_at,
-        result.address,
-        private_key,
-        display_pattern(&config.prefix),
-        display_pattern(&config.suffix),
-        config.case_sensitive,
-        average_attempts_text(config),
-        total_attempts,
-        result.worker_id,
-        result.worker_attempts,
-    );
-
-    atomic_write(&result_path, body.as_bytes())?;
-    atomic_write(
-        &config.result_dir.join("matched-wallet-latest.txt"),
-        body.as_bytes(),
-    )?;
-    Ok(result_path)
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir {} failed: {e}", parent.display()))?;
-    }
-
-    let temp_path = path.with_file_name(format!(
-        "{}.{}.{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id(),
-        Local::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-
-    {
-        let mut file = fs::File::create(&temp_path)
-            .map_err(|e| format!("create {} failed: {e}", temp_path.display()))?;
-        file.write_all(bytes)
-            .map_err(|e| format!("write {} failed: {e}", temp_path.display()))?;
-        file.sync_all()
-            .map_err(|e| format!("sync {} failed: {e}", temp_path.display()))?;
-    }
-
-    replace_file(&temp_path, path)
-}
-
-fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        replace_file_windows(temp_path, path)
-    }
-
-    #[cfg(not(windows))]
-    {
-        fs::rename(temp_path, path).map_err(|e| {
-            format!(
-                "rename {} to {} failed: {e}",
-                temp_path.display(),
-                path.display()
-            )
-        })
-    }
-}
-
-#[cfg(windows)]
-fn replace_file_windows(temp_path: &Path, path: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    fn to_wide(path: &Path) -> Vec<u16> {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    }
-
-    let from = to_wide(temp_path);
-    let to = to_wide(path);
-
-    let ok = unsafe {
-        MoveFileExW(
-            from.as_ptr(),
-            to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-
-    if ok == 0 {
-        return Err(format!(
-            "replace {} with {} failed",
-            path.display(),
-            temp_path.display()
-        ));
-    }
-
-    Ok(())
-}
-
-fn log_event(config: &Config, message: &str) -> Result<(), String> {
-    fs::create_dir_all(&config.logs_dir).map_err(|e| format!("create logs dir failed: {e}"))?;
-    let log_path = config
-        .logs_dir
-        .join(format!("{}.log", Local::now().format("%Y-%m-%d")));
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .map_err(|e| format!("open log {} failed: {e}", log_path.display()))?;
-    writeln!(file, "[{}] {}", Local::now().to_rfc3339(), message)
-        .map_err(|e| format!("write log failed: {e}"))
-}
-
-fn total_attempts(states: &[ThreadState]) -> u64 {
-    states
-        .iter()
-        .map(|state| state.attempts.load(Ordering::Relaxed))
-        .sum()
-}
-
-fn alive_workers(states: &[ThreadState]) -> usize {
-    states
-        .iter()
-        .filter(|state| state.alive.load(Ordering::Relaxed))
-        .count()
-}
-
-fn format_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
-}
-
-fn format_number(value: u64) -> String {
-    let text = value.to_string();
-    let mut output = String::with_capacity(text.len() + text.len() / 3);
-    for (index, character) in text.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            output.push(',');
-        }
-        output.push(character);
-    }
-    output.chars().rev().collect()
-}
-
-fn display_pattern(value: &str) -> &str {
-    if value.is_empty() {
-        "-"
-    } else {
-        value
-    }
-}
-
-fn average_attempts_text(config: &Config) -> String {
-    let digits = config.prefix.len() + config.suffix.len();
-    let letters = checksum_sensitive_letter_count(config);
-
-    average_attempts_plain(config)
-        .map(format_number)
-        .unwrap_or_else(|| {
-            if config.case_sensitive && letters > 0 {
-                format!("16^{digits} x 2^{letters}")
-            } else {
-                format!("16^{digits}")
-            }
-        })
-}
-
-fn average_attempts_plain(config: &Config) -> Option<u64> {
-    let digits = config.prefix.len() + config.suffix.len();
-    let letters = checksum_sensitive_letter_count(config);
-    let mut value = 1u64;
-
-    for _ in 0..digits {
-        value = value.checked_mul(16)?;
-    }
-
-    if config.case_sensitive {
-        for _ in 0..letters {
-            value = value.checked_mul(2)?;
-        }
-    }
-
-    Some(value)
-}
-
-fn checksum_sensitive_letter_count(config: &Config) -> usize {
-    if !config.case_sensitive {
-        return 0;
-    }
-
-    config
-        .prefix
-        .chars()
-        .chain(config.suffix.chars())
-        .filter(|ch| matches!(ch, 'a'..='f' | 'A'..='F'))
-        .count()
-}
-
