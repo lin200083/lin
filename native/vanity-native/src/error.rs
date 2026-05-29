@@ -5,6 +5,7 @@ pub enum VanityError {
     InvalidHex(String),
     BuildFailed(String),
     Io(std::io::Error),
+    Msg(String),
     PatternTooLong,
     NoPattern,
     InvalidWorkers,
@@ -18,6 +19,7 @@ impl fmt::Display for VanityError {
             VanityError::InvalidHex(msg) => write!(f, "Invalid hex pattern: {}", msg),
             VanityError::BuildFailed(msg) => write!(f, "Build failed: {}", msg),
             VanityError::Io(err) => write!(f, "IO error: {}", err),
+            VanityError::Msg(msg) => write!(f, "{}", msg),
             VanityError::PatternTooLong => write!(f, "Prefix plus suffix cannot exceed 40 hex characters"),
             VanityError::NoPattern => write!(f, "At least one of prefix or suffix is required"),
             VanityError::InvalidWorkers => write!(f, "Workers must be at least 1"),
@@ -30,6 +32,18 @@ impl fmt::Display for VanityError {
 impl From<std::io::Error> for VanityError {
     fn from(err: std::io::Error) -> Self {
         VanityError::Io(err)
+    }
+}
+
+impl From<String> for VanityError {
+    fn from(msg: String) -> Self {
+        VanityError::Msg(msg)
+    }
+}
+
+impl From<&str> for VanityError {
+    fn from(msg: &str) -> Self {
+        VanityError::Msg(msg.to_string())
     }
 }
 
