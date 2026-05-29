@@ -16,7 +16,7 @@ use chrono::Local;
 use cli::Cli;
 use config::Config;
 use error::Result;
-use output::{self, MatchResult, StatusSnapshot};
+use output::{MatchResult, StatusSnapshot};
 use worker::ThreadState;
 
 fn main() {
