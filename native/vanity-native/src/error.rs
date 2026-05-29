@@ -1,6 +1,7 @@
 use std::fmt;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum VanityError {
     InvalidHex(String),
     BuildFailed(String),
