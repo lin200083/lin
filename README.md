@@ -92,3 +92,42 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 | 🔑 命中了没有私钥？ | 检查是否误加了 `-RedactPrivateKey` |
 | 🦀 找不到 Rust/Cargo？ | 已预编译 `bin\vanity-native.exe`，直接运行 |
 | 📂 怎么看结果？ | 打开 `results\matched-wallet-latest.txt`，**备份 PrivateKey** |
+
+<br>
+
+## 📝 更新记录
+
+### v1.3.0 (2026-05-29)
+
+**🏗️ 代码模块化重构**
+
+将 1000+ 行的单体 `main.rs` 拆分为 7 个职责清晰的模块：
+
+| 模块 | 职责 |
+|------|------|
+| `error.rs` | 自定义错误类型 `VanityError` |
+| `cli.rs` | CLI 参数定义 (clap) |
+| `config.rs` | 配置构造与验证 |
+| `crypto.rs` | 加密操作 (secp256k1/keccak) |
+| `worker.rs` | 工作线程循环与状态追踪 |
+| `output.rs` | 状态/结果/日志输出 |
+| `main.rs` | 精简入口 + 测试套件 |
+
+**优化效果：**
+- ✅ 单一职责：每个模块只负责一件事
+- ✅ 可读性：每个文件 100-200 行 vs 原来 1000+ 行
+- ✅ 可测试性：模块可独立单元测试
+- ✅ 错误处理：自定义 `VanityError` 枚举，错误信息更清晰
+
+> ⚠️ 功能行为完全不变，纯代码结构优化。
+
+---
+
+### v1.2.0
+
+- 初始公开版本
+- Rust 原生引擎，支持多线程并行搜索
+- PowerShell 交互式界面
+- 支持前缀/后缀/大小写敏感匹配
+- 自动构建 Rust 引擎
+- 实时状态显示
