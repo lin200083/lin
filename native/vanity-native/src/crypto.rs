@@ -1,6 +1,6 @@
 use secp256k1::{constants, PublicKey, Scalar, Secp256k1, SecretKey};
 use sha3::{Digest, Keccak256};
-use rand::RngCore;
+use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
