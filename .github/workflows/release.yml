@@ -33,15 +33,46 @@ jobs:
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           Copy-Item -Force "native/vanity-native/target/release/vanity-native.exe" "bin/vanity-native.exe"
 
-      - name: Create release packages
-        run: ./Release-Pack.ps1
-
-      - name: Get version from Cargo.toml
+      - name: Get version
         run: |
           $ver = Select-String -Path native/vanity-native/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
           Add-Content -Path $env:GITHUB_ENV -Value "PKG_VERSION=$ver" -Encoding UTF8
 
+      - name: Create release packages
+        run: |
+          $version = $env:PKG_VERSION
+          $distDir = "dist"
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+
+          # Beginner package
+          $beginnerDir = "$distDir/vanity-wallet-generator-windows-x64-v$version"
+          New-Item -ItemType Directory -Path $beginnerDir -Force | Out-Null
+          $items = @("README.md","README_EN.md","LICENSE","start-native.ps1","easy-start.ps1","双击我运行.bat","Get-Status.ps1","Measure-NativeSpeed.ps1","Clean-Generated.ps1")
+          foreach ($item in $items) { Copy-Item $item $beginnerDir -Force }
+          New-Item -ItemType Directory -Path "$beginnerDir/bin" -Force | Out-Null
+          Copy-Item "bin/vanity-native.exe" "$beginnerDir/bin/" -Force
+          Compress-Archive -Path $beginnerDir -DestinationPath "$distDir/vanity-wallet-generator-windows-x64-v$version.zip" -Force
+          Remove-Item $beginnerDir -Recurse -Force
+
+          # Source package
+          $sourceDir = "$distDir/vanity-wallet-generator-source-v$version"
+          New-Item -ItemType Directory -Path $sourceDir -Force | Out-Null
+          $srcItems = @(".gitignore","README.md","README_EN.md","LICENSE","Build-Native.ps1","Clean-Generated.ps1","Get-Status.ps1","Measure-NativeSpeed.ps1","Release-Pack.ps1","start-native.ps1","easy-start.ps1","双击我运行.bat","Upload-Release.ps1")
+          foreach ($item in $srcItems) { Copy-Item $item $sourceDir -Force }
+          New-Item -ItemType Directory -Path "$sourceDir/native/vanity-native/src" -Force | Out-Null
+          Copy-Item "native/vanity-native/Cargo.lock" "$sourceDir/native/vanity-native/" -Force
+          Copy-Item "native/vanity-native/Cargo.toml" "$sourceDir/native/vanity-native/" -Force
+          Copy-Item "native/vanity-native/src/*" "$sourceDir/native/vanity-native/src/" -Force
+          Compress-Archive -Path $sourceDir -DestinationPath "$distDir/vanity-wallet-generator-source-v$version.zip" -Force
+          Remove-Item $sourceDir -Recurse -Force
+
+          # Standalone exe
+          Copy-Item "bin/vanity-native.exe" "$distDir/vanity-native-windows-x64-v$version.exe" -Force
+
+          Write-Host "Packages created successfully!"
+
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes-file "dist/release-notes-v$env:PKG_VERSION.md" dist/*.zip dist/*.exe
+        run: |
+          gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes dist/*.zip dist/*.exe
