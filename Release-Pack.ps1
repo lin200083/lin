@@ -124,15 +124,19 @@ Compress-Archive -LiteralPath $BeginnerRoot -DestinationPath $beginnerZip -Force
 Compress-Archive -LiteralPath $SourceRoot -DestinationPath $sourceZip -Force
 Copy-Item -LiteralPath $NativeExe -Destination $StandaloneExe -Force
 $changelog = ""
-$null = git rev-parse --git-dir 2>&1
-if ($LASTEXITCODE -eq 0) {
-    $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
-    if ($lastTag) {
-        $log = git log --oneline --no-decorate "$lastTag..HEAD" 2>$null
-        if ($log) {
-            $changelog = ($log | ForEach-Object { "- $_" }) -join "`n"
+try {
+    $null = git rev-parse --git-dir 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
+        if ($lastTag) {
+            $log = git log --oneline --no-decorate "$lastTag..HEAD" 2>$null
+            if ($log) {
+                $changelog = ($log | ForEach-Object { "- $_" }) -join "`n"
+            }
         }
     }
+} catch {
+    Write-Host "Note: Could not generate changelog from git (this is OK)"
 }
 
 if ($changelog) {
@@ -171,7 +175,7 @@ This tool generates private keys locally. Keep result files private and back up 
 
 Set-Content -LiteralPath $ReleaseNotes -Encoding UTF8 -Value $notesContent
 
-Remove-Item -LiteralPath $StagingDir -Recurse -Force
+Remove-Item -LiteralPath $StagingDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "Created:"
 Write-Host $beginnerZip
