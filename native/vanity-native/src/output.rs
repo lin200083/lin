@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::Duration;
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{Result, VanityError};
 
 pub struct StatusSnapshot {
     pub attempts: u64,
@@ -62,7 +62,7 @@ pub fn print_status(
         print!("\r{line}{}", " ".repeat(padding));
         io::stdout()
             .flush()
-            .map_err(|e| crate::error::VanityError::Msg(format!("flush stdout failed: {e}")))?;
+            .map_err(|e| VanityError::Msg(format!("flush stdout failed: {e}")))?;
         *last_live_len = line.len();
     }
 
@@ -77,7 +77,7 @@ pub fn finish_live_line(config: &Config, last_live_len: &mut usize) -> Result<()
     print!("\r{}\r\n", " ".repeat(*last_live_len));
     io::stdout()
         .flush()
-        .map_err(|e| crate::error::VanityError::Msg(format!("flush stdout failed: {e}")))?;
+        .map_err(|e| VanityError::Msg(format!("flush stdout failed: {e}")))?;
     *last_live_len = 0;
     Ok(())
 }
@@ -176,7 +176,8 @@ pub fn write_result(
 }
 
 pub fn log_event(config: &Config, message: &str) -> Result<()> {
-    fs::create_dir_all(&config.logs_dir).map_err(|e| crate::error::VanityError::Msg(format!("create logs dir failed: {e}"))?;
+    fs::create_dir_all(&config.logs_dir)
+        .map_err(|e| VanityError::Msg(format!("create logs dir failed: {e}")))?;
     let log_path = config
         .logs_dir
         .join(format!("{}.log", Local::now().format("%Y-%m-%d")));
@@ -184,9 +185,9 @@ pub fn log_event(config: &Config, message: &str) -> Result<()> {
         .create(true)
         .append(true)
         .open(&log_path)
-        .map_err(|e| crate::error::VanityError::Msg(format!("open log {} failed: {e}", log_path.display()))?;
+        .map_err(|e| VanityError::Msg(format!("open log {} failed: {e}", log_path.display())))?;
     writeln!(file, "[{}] {}", Local::now().to_rfc3339(), message)
-        .map_err(|e| crate::error::VanityError::Msg(format!("write log failed: {e}"))
+        .map_err(|e| VanityError::Msg(format!("write log failed: {e}")))
 }
 
 pub fn format_duration(duration: Duration) -> String {
@@ -220,7 +221,7 @@ pub fn display_pattern(value: &str) -> &str {
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| crate::error::VanityError::Msg(format!("create dir {} failed: {e}", parent.display()))?;
+            .map_err(|e| VanityError::Msg(format!("create dir {} failed: {e}", parent.display())))?;
     }
 
     let temp_path = path.with_file_name(format!(
@@ -232,11 +233,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 
     {
         let mut file = fs::File::create(&temp_path)
-            .map_err(|e| crate::error::VanityError::Msg(format!("create {} failed: {e}", temp_path.display()))?;
+            .map_err(|e| VanityError::Msg(format!("create {} failed: {e}", temp_path.display())))?;
         file.write_all(bytes)
-            .map_err(|e| crate::error::VanityError::Msg(format!("write {} failed: {e}", temp_path.display()))?;
+            .map_err(|e| VanityError::Msg(format!("write {} failed: {e}", temp_path.display())))?;
         file.sync_all()
-            .map_err(|e| crate::error::VanityError::Msg(format!("sync {} failed: {e}", temp_path.display()))?;
+            .map_err(|e| VanityError::Msg(format!("sync {} failed: {e}", temp_path.display())))?;
     }
 
     replace_file(&temp_path, path)
@@ -251,11 +252,11 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
     #[cfg(not(windows))]
     {
         fs::rename(temp_path, path).map_err(|e| {
-            format!(
+            VanityError::Msg(format!(
                 "rename {} to {} failed: {e}",
                 temp_path.display(),
                 path.display()
-            )
+            ))
         })
     }
 }
@@ -286,11 +287,11 @@ fn replace_file_windows(temp_path: &Path, path: &Path) -> Result<()> {
     };
 
     if ok == 0 {
-        return Err(crate::error::VanityError::Msg(format!(
+        return Err(VanityError::Msg(format!(
             "replace {} with {} failed",
             path.display(),
             temp_path.display()
-        ));
+        )));
     }
 
     Ok(())
